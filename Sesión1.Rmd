@@ -1,0 +1,544 @@
+---
+title: "Sesión 1 - Datos Espaciales"
+output: html_document
+---
+
+# ¿Qué es un Sistema de Información Geográfica?
+
+El almacenamiento y análisis de datos espaciales se realiza tradicionalmente en Sistemas de Información Geográfica (GIS por sus siglas en inglés). Según la definición basada en la caja de herramientas de Burrough y McDonnell (1998, p. 11), un GIS es "... un poderoso conjunto de herramientas para recopilar, almacenar, recuperar a voluntad, transformar y mostrar datos espaciales del mundo real para un conjunto particular de propósitos". Otra definición mencionada en la misma fuente se refiere a "... verificar, manipular y analizar datos, que están referenciados espacialmente a la Tierra".
+
+Su capacidad para analizar y visualizar datos hace que R sea una buena opción para el análisis de datos espaciales. Para muchos proyectos de análisis espacial, usar solo R puede ser suficiente para el trabajo. En otros casos, R se utilizará junto con el software GIS y posiblemente también con una base de datos GIS. Más adelante se mostrará cómo los datos espaciales se importan y exportan a formatos de archivo GIS o bases de datos. Como suele ser el caso en el análisis de datos aplicados, el problema real no es si un problema determinado se puede resolver utilizando un entorno como R, sino si se puede resolver de manera eficiente y reproducible con R. En algunos casos, combinar diferentes componentes de software en Un flujo de trabajo puede ser la solución más sólida, por ejemplo, secuencias de comandos en lenguajes como Python.
+
+# Tipos de datos espaciales
+
+Los datos espaciales tienen referencia espacial: tienen valores de coordenadas y un sistema de referencia para estas coordenadas. Como un ejemplo bastante simple, considere la ubicación de los picos de los volcanes en la Tierra. Podríamos enumerar las coordenadas de todos los volcanes conocidos como pares de valores de grados decimales de longitud/latitud con respecto al meridiano principal en Greenwich y la latitud cero en el ecuador. El Sistema Geodésico Mundial (WGS84) es una representación de la Tierra que se usa con frecuencia.
+
+Supongamos que estamos interesados en los volcanes que han mostrado actividad entre 1980 y 2000, según un sistema de registro sísmico acordado. Este conjunto de datos consta solo de puntos. Cuando queremos dibujar estos puntos en un mapa (plano), nos enfrentamos con el problema de la proyección: tenemos que traducir del sistema de longitud/latitud esférico a un nuevo sistema de coordenadas no esférico, que inevitablemente cambia sus posiciones relativas.
+
+Si también tenemos la magnitud de la última erupción observada en el volcán, esta información se llama atributo: no es espacial en sí misma, pero se cree que esta información de atributo existe para cada entidad espacial (volcán).
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+library(sp)
+library(maps)
+library(maptools)
+library(rgdal)
+library(dplyr)
+volc.tab = read.table("data1964al.xy")
+volc = SpatialPoints(volc.tab[c(2,1)])
+llCRS <- CRS("+proj=longlat +ellps=WGS84")
+proj4string(volc) <- llCRS
+prj_new = CRS("+proj=moll +ellps=WGS84")
+volc_proj = spTransform(volc, prj_new)
+wrld <- map("world", interior=FALSE, xlim=c(-179,179), ylim=c(-89,89),
+ plot=FALSE)
+wrld_p <- pruneMap(wrld, xlim=c(-179,179))
+wrld_sp <- map2SpatialLines(wrld_p, proj4string=llCRS)
+wrld_proj <- spTransform(wrld_sp, prj_new)
+wrld_grd <- gridlines(wrld_sp, easts=c(-179,seq(-150,150,50),179.5),
+ norths=seq(-75,75,15), ndiscr=100)
+wrld_grd_proj <- spTransform(wrld_grd, prj_new)
+at_sp <- gridat(wrld_sp, easts=0, norths=seq(-75,75,15), offset=0.3)
+at_proj <- spTransform(at_sp, prj_new)
+opar = par(no.readonly = TRUE)
+par(mar=c(1,1,1,1)+0.1, xpd=NA)
+plot(wrld_proj, col="grey50")
+plot(wrld_grd_proj, add=TRUE, lty=3, col="grey50")
+points(volc_proj, cex = .8, pch = 3)
+text(coordinates(at_proj), pos=at_proj$pos, offset=at_proj$offset,
+ labels=parse(text=as.character(at_proj$labels)), cex=0.6)
+```
+
+
+Sin atributos explícitos, los puntos generalmente llevan atributos implícitos, por ejemplo, todos los puntos en este mapa tienen el atributo implícito constante: marcan un "pico de volcán", en contraste con otros puntos que no lo tienen. Representamos la información puramente espacial de las entidades por modelos de datos. Los diferentes tipos de modelos de datos que distinguimos aquí incluyen los siguientes:
+
+Punto: una ubicación de un solo punto, como una lectura GPS o una dirección geocodificada.
+
+Línea: un conjunto de puntos ordenados, conectados por segmentos de línea recta.
+
+Polígono: un área, marcada por una o más líneas de cerramiento, que posiblemente contenga agujeros.
+
+Cuadrícula: una colección de puntos o celdas rectangulares, organizados en una red regular.
+
+Los primeros tres son modelos de datos vectoriales y representan entidades lo más exactamente posible, mientras que el modelo de datos final es un modelo de datos ráster, que representa superficies continuas mediante el uso de un mosaico regular. Todos los datos espaciales consisten en información posicional, respondiendo la pregunta "¿dónde está?". En muchas aplicaciones, estos serán extendidos por atributos, respondiendo la pregunta "¿qué es dónde?"; Chrisman (2002, pp. 37-69) distingue un rango de consultas espaciales y espacio-temporales de este tipo.
+
+## Ejemplo 1
+
+La ubicación (coordenadas x, y) de un volcán puede ser suficiente para establecer su posición con respecto a otros volcanes en la Tierra, pero para describir un solo volcán podemos usar más información. Intentemos, por ejemplo, describir la topografía de un volcán. La siguiente figura muestra varias formas diferentes de representar una superficie continua (como la topografía) en un computador.
+
+
+```{r, echo=FALSE}
+data(volcano)
+opar = par(no.readonly = TRUE)
+par(mar = rep(1,4))
+grys <- grey.colors(8, 0.55, 0.95)
+
+layout(matrix(c(1,2,1,3,1,4),3,2,byrow=TRUE), c(3,1))
+
+image(volcano, axes=FALSE, col=grys, asp=1, main="a")
+contour(volcano, add=TRUE)
+box()
+
+image(volcano, axes=FALSE, col='white', asp=1, main="b")
+x2 = ContourLines2SLDF(contourLines(volcano))
+plot(x2, add=TRUE)
+box()
+
+image(volcano, axes=FALSE, col='white', asp=1, main="c")
+pl <- list(Polygon(coordinates(x2[x2$level == 140,])))
+plot(SpatialPolygons(list(Polygons(pl, ID="x"))), add = TRUE)
+box()
+
+image(volcano, axes=FALSE, col=grys, asp=1, main="d")
+x3l1 = coordinates(x2[x2$level == 160,])[[1]][[1]]
+x3l2 = coordinates(x2[x2$level == 160,])[[1]][[2]]
+pl <- list(Polygon(x3l1,hole=F), Polygon(x3l2,hole=TRUE))
+x3 = SpatialPolygons(list(Polygons(pl, ID=c("x"))))
+
+SP2TRI = function(x, debug = TRUE){
+    p = x@polygons[[1]] # object of class Polygons
+    p1 = p@Polygons[[1]] # outer Polygon
+    p2 = p@Polygons[[2]] # inner Polygon
+    stopifnot(!p1@hole)
+    stopifnot(p2@hole)
+    # find nearest point
+    allcoords = rbind(p1@coords, p2@coords)
+    n1 = nrow(p1@coords)
+    n2 = nrow(p2@coords)
+    dists = as.matrix(dist(allcoords))[((n1+1):(n1+n2)),1:n1]
+    wm = which.min(dists)[1]
+    ind1 = (wm %/% n2) + 1
+    ind2 = wm %% n2
+    if (debug)
+        print(c(ind1,ind2))
+    #plot polygon points:
+    p1c = p1@coords
+    p2c = p2@coords
+    #plot shortest distance:
+    if (debug)
+        lines(rbind(p1c[ind1,], p2c[ind2,]))
+    if (debug)
+        points(rbind(p1c, p2c))
+    p = rbind(p1c[c(ind1:n1,1:ind1),], p2c[c(ind2:n2,1:ind2),], p1c[ind1,])
+    polygon(p, col = 'red', border = NULL)
+    polygon(p, angle=45, border = NA, density = 12)
+}
+plot(x3, col = 'transparent', add = TRUE)
+SP2TRI(x3, FALSE)
+box()
+
+par(opar)
+```
+
+
+
+La intuición clave que subyace al desarrollo de las clases y métodos en el paquete *sp*, y sus paquetes dependientes más cercanos, es que los usuarios que se acercan a R con experiencia en GIS querrán ver 'capas', 'coberturas', 'rásteres' o 'geometrías '. Visto desde este punto de vista, las clases *sp* deberían ser razonablemente familiares y parecer modelos de datos conocidos. Por otro lado, para los usuarios estadísticos de R, "todo" es un data.frame, una tabla rectangular con filas de observaciones en columnas de variables. Para permitir que los dos grupos dispares de usuarios jueguen juntos felizmente, han crecido las clases que parecen modelos de datos GIS para GIS y otras personas de datos espaciales, y se ven y se comportan como marcos de datos desde el punto de vista de los estadísticos aplicados y otros analistas de datos.
+
+En esta parte del curso describimos las clases y los métodos del paquete *sp*, y al hacerlo también proporciona una guía práctica de la estructura interna de muchos modelos de datos GIS, ya que R permite al usuario acercarse lo más posible a los datos.
+
+La clase de base es la clase *Spatial*, con solo dos espacios. El primero es un cuadro delimitador, una matriz de coordenadas numéricas con los nombres de columna c('min', 'max') y al menos dos filas, con las coordenadas. Con mucha frecuencia, el cuadro delimitador se genera automáticamente a partir de los datos en las subclases de *Spatial*. El segundo es un objeto de clase CRS que define el sistema de referencia de coordenadas, y puede establecerse en 'missing', representado por $NA$ en R, por CRS(as.character($NA$)), su valor predeterminado. Las operaciones en los objetos *Spatial*$*$ deben actualizar o copiar estos valores a los nuevos objetos *Spatial*$*$ que se están creando. Podemos usar $getClass$ para devolver la definición completa de una clase, incluidos sus nombres de ranura y los tipos de sus contenidos:
+
+```{r}
+library(sp)
+getClass("Spatial")
+```
+
+
+## SpatialPoints
+
+La clase SpatialPoints es la primera subclase de Spatial, y una muy importante. La extensión de SpatialPoints a otras subclases significa que explicar cómo funciona esta clase generará beneficios más adelante. En esta sección, también observamos los métodos para objetos Spatial$*$ y al extender objetos Spatial$*$ para incluir datos de atributo, donde cada entidad espacial, aquí un punto, está vinculada a una fila en un marco de datos. Consideramos que los objetos Spatial$*$ son subclases de Spatial, y la mejor manera para comenzar es con SpatialPoints.
+
+```{r}
+library(readxl)
+Centros_Poblados_Cundinamarca <- read_excel("Centros_Poblados_Cundinamarca.xlsx")
+
+Coordenadas <- cbind(Centros_Poblados_Cundinamarca$Longitud, Centros_Poblados_Cundinamarca$Latitud)
+str(Coordenadas)
+```
+
+La clase SpatialPoints amplía la clase Spatial al agregar un intervalo de coords, en el que se puede insertar una matriz de coordenadas. Tiene un método de resumen que muestra el cuadro delimitador, si el objeto se proyecta (aquí FALSO, porque la cadena "longlat" se incluye en la descripción de la proyección) y el número de filas de coordenadas. Las clases en sp no son atómicas: no hay clase SpatialPoint extendida por SpatialPoints. Esto se debe a que los objetos R son vectorizados por naturaleza, no atómicos. Un objeto SpatialPoints puede, sin embargo, consistir en un solo punto.
+
+```{r}
+llCRS <- CRS("+proj=longlat +ellps=WGS84")
+Coordenadas_sp <- SpatialPoints(Coordenadas, proj4string = llCRS) #proj4string es una forma de especificar el sistema de coordenadas
+summary(Coordenadas_sp)
+bbox(Coordenadas_sp)
+```
+
+Extraer las coordenadas de un objeto SpatialPoints como una matriz numérica es tan simple como usar el método de coordenadas.
+
+Extraer las coordenadas de un objeto SpatialPoints como una matriz numérica es tan simple como usar el método de coordenadas.
+
+```{r}
+tausa <- which(Centros_Poblados_Cundinamarca$`Nombre municipio` == "TAUSA")
+tausa
+coordinates(Coordenadas_sp)[tausa,]
+plot(Coordenadas_sp)
+```
+
+Realizando un gráfico con conexión Google.
+
+```{r}
+library(leaflet)
+leaflet(Centros_Poblados_Cundinamarca) %>% addTiles() %>%
+  addMarkers(~Longitud, ~Latitud, popup = paste("<b> Nombre Centro Poblado:</b>", Centros_Poblados_Cundinamarca$`Nombre centro poblado`, "<br>"))
+```
+
+## SpatialPolygons
+
+La representación básica de un polígono en R es una línea cerrada, una secuencia de coordenadas de puntos donde el primer punto es el mismo que el último punto. Un conjunto de polígonos está formado por líneas cerradas separadas por puntos NA. Al igual que las líneas, no es fácil trabajar con polígonos representados de esta manera.
+
+
+```{r}
+library(sp)
+library(maps)
+library(maptools)
+library(rgdal)
+library(dplyr)
+Colombia_Deptos<-readOGR(dsn="D:/Documentos/Cursillo - Espacial/Sesión 1/COL_adm",layer="COL_adm1")
+head(Colombia_Deptos@data)
+plot(Colombia_Deptos)
+```
+
+Se pueden realizar filtros desde un objeto de clase SpatialPolygons.
+
+```{r}
+Eje_Cafetero <- subset(Colombia_Deptos,ID_1 %in% c(2,8,24,25))
+plot(Eje_Cafetero)
+```
+
+Se pueden marcar los centroides de este filtro.
+
+```{r}
+centroides=getSpPPolygonsLabptSlots(Eje_Cafetero)
+centroides<-centroides %>% as.data.frame()
+colnames(centroides)=c("Longitud","Latitud")
+coordinates(centroides)=~Longitud+Latitud
+plot(Eje_Cafetero)
+plot(centroides,add=T,pch=20,col=2)
+```
+
+
+Se pueden hacer modificaciones desde el conjunto de datos que se carga en conjunto con el SpatialPolygons
+
+```{r}
+Colombia_Deptos$NAME_1=as.factor(Colombia_Deptos$NAME_1)
+levels(Colombia_Deptos$NAME_1)=c("Amazonas","Antioquia","Arauca","Atlántico","Bolívar","Boyacá","Córdoba","Caldas","Caquetá","Casanare","Cauca","Cesar","Chocó","Cundinamarca","Guainía","Guaviare","Huila","La Guajira","Magdalena","Meta","Nariño","Norte de Santander","Putumayo","Quindío","Risaralda","San Andrés","Santander","Sucre","Tolima","Valle del Cauca","Vaupés","Vichada")
+head(Colombia_Deptos@data)
+```
+
+Se pueden realizar merge con objetos de clase data.frame
+
+```{r}
+library(readxl)
+Tasa_de_Crecimiento <- read_excel("Tasa de Crecimiento.xlsx")
+head(Tasa_de_Crecimiento)
+Colombia_Crecimiento <- merge(Colombia_Deptos,Tasa_de_Crecimiento,by.x="NAME_1",
+                              by.y="Departamento")
+spplot(Colombia_Crecimiento,"Tasa_Crecimiento")
+```
+
+Se puede hacer el cambio de la paleta de colores
+
+```{r}
+spplot(Colombia_Crecimiento,"Tasa_Crecimiento",
+       col.regions= colorRampPalette(c("red", "orange" , "green"))( 100 ) )
+```
+
+También se puede realizar la conexión con Leaflet
+
+```{r}
+library(leaflet)
+
+paleta=c("red","orange","yellow","green")
+q_pal=colorQuantile(paleta,Colombia_Crecimiento$Tasa_de_Crecimiento)
+
+leaflet(Colombia_Crecimiento) %>% addTiles() %>% 
+    addPolygons(color="#444444", weight = 1,smoothFactor = 0.5,opacity = 1.0, fillOpacity = 0.5, fillColor = q_pal(Colombia_Crecimiento$Tasa_Crecimiento),highlightOptions = highlightOptions(color = "white", weight = 2,bringToFront = TRUE)) %>% 
+  addLegend(pal = q_pal, values = ~Tasa_Crecimiento)
+```
+
+## Datos raster
+
+raster se publicó en el CRAN en 2010, y sus usuarios ahora generan una gran cantidad de tráfico en la lista de correo R-sig-geo. El paquete está documentado en varias viñetas, que están disponibles con el paquete, y en línea desde CRAN (Hijmans, 2012b). Utiliza clases sp para datos vectoriales, y agrega nuevas clases para datos raster, junto con muchos métodos y funciones para el manejo y análisis de datos. Un avance clave que hace posible este paquete es que los objetos raster pueden guardarse en el disco en lugar de en la memoria; las opciones se pueden usar para controlar dónde se guardan los datos (Hijmans, 2012c).
+
+```{r}
+library(raster)
+r <- raster(ncol=10, nrow=10, xmx=-80, xmn=-150, ymn=20, ymx=60)
+r
+```
+El objeto r solo tiene el esqueleto de un conjunto de datos raster, Es decir, conoce su ubicación, resolución, etc., pero no tiene valores asociados. Asignemos algunos valores. En este caso, asigno un vector de números aleatorios con una longitud que es igual al número de celdas de RasterLayer.
+
+```{r}
+values(r) <- runif(ncell(r))
+r
+```
+
+También puede asignar números de celda (en este caso sobrescribiendo los valores anteriores)
+
+```{r}
+values(r) <- 1:ncell(r)
+r
+```
+
+Podemos dibujar este objeto.
+
+```{r}
+plot(r)
+
+# añadimos el polígono and los puntos
+lon <- c(-116.8, -114.2, -112.9, -111.9, -114.2, -115.4, -117.7)
+lat <- c(41.3, 42.9, 42.4, 39.8, 37.6, 38.3, 37.6)
+lonlat <- cbind(lon, lat)
+crdref <- CRS('+proj=longlat +datum=WGS84')
+pols <- spPolygons(lonlat, crs=crdref)
+plot(pols, border='blue', lwd=2, add=TRUE)
+points(lonlat, col='red', pch=20, cex=3)
+```
+
+Ahora, vamos a cargar en datos raster la imagen de las altitudes de Colombia
+
+```{r}
+mydir<-"D:/Documentos/Cursillo - Espacial/Sesión 1/COL_alt"
+fpath<-list.files(path = mydir, full.names = TRUE, pattern = "COL_alt")
+Elevacion.raw<-raster(fpath[1])
+plot(Elevacion.raw, axes=FALSE)
+```
+
+También se puede visualizar desde Leaflet
+
+```{r}
+pal <- colorNumeric(c("white","red", "yellow", "green"), values(Elevacion.raw),  na.color = "transparent")
+
+leaflet() %>% addTiles() %>%
+  addRasterImage(Elevacion.raw, colors = pal, opacity = 0.8) %>%
+  addLegend(pal = pal, values = values(Elevacion.raw),
+    title = "Elevación")
+```
+
+## Extracción de datos ráster a un conjunto de datos
+
+A continuación se combinarán los datos en el SpatialPolygons, Un SpatialPoints y un raster para crear un gráfico con las altitudes de algunos lugares en concreto de Colombia.
+
+```{r,warning=FALSE,message=FALSE}
+Coord_Acu <- read_excel("Coord_Acu.xlsx")
+Coordenadas=data.frame(Longitud=Coord_Acu$LONGITUD_X,Latitud=Coord_Acu$LATITUD_Y)
+coordinates(Coordenadas)= ~ Longitud + Latitud
+rasValue=extract(Elevacion.raw, Coordenadas)
+
+Coord_Acu$Elevacion=rasValue
+Coord_Acu$Piso_Termico=cut(Coord_Acu$Elevacion,breaks=c(0,1000,2000,3000,4000),labels=c("Calido","Medio","Frio","Paramo"))
+
+deptos=c("4","5","7","12","19","28") # Atlántico, Bolivar, Córdoba, Cesar, Magdalena y Sucre
+
+Zona_Fase3=subset(Colombia_Deptos, Colombia_Deptos$ID_1 %in% deptos)
+
+coordinates(Coord_Acu)= ~ LONGITUD_X + LATITUD_Y
+
+Prestadores_Fase3=intersect(Coord_Acu,Zona_Fase3)
+
+getColor <- function(Prestadores_Fase3) {
+  sapply(Prestadores_Fase3$Piso_Termico, function(Piso_Termico) {
+    if(Piso_Termico == "Calido") {
+      "red"
+    } else if(Piso_Termico == "Medio") {
+      "orange"
+    } else if(Piso_Termico == "Frio") {
+      "green"
+    } else {
+      "blue"
+    } })
+}
+
+Color=getColor(Prestadores_Fase3)
+Prestadores_Fase3$Long=coordinates(Prestadores_Fase3)[,1]
+Prestadores_Fase3$Lat=coordinates(Prestadores_Fase3)[,2]
+Piso_Termico=Prestadores_Fase3$Piso_Termico
+
+paleta=c("red","orange","green","blue")
+q_pal=colorFactor(paleta,Prestadores_Fase3$Piso_Termico)
+
+leaflet(Prestadores_Fase3) %>% addTiles() %>%
+  addCircleMarkers(~Long, ~Lat, color=~Color,
+                   radius=1) %>% 
+  addPolygons(data=Zona_Fase3) %>% 
+  addLegend(pal = q_pal, values = ~Piso_Termico)
+```
+
+
+## Manejo de datos raster
+
+```{r,warning=FALSE,message=FALSE}
+# Procesamiento de Datos
+library(foreign) # para leer archivos dbfs
+library(dplyr)
+library(magrittr)
+library(tidyr) 
+library(ggplot2)
+library(gridExtra) 
+
+# spatial
+library(raster)
+library(rasterVis)
+library(rgdal)
+```
+
+QGIS tiene una selección útil de datos de muestra en su sitio web. Los datos incluyen dos conjuntos de datos ráster, así como conjuntos de datos vectoriales múltiples. Cuidado, el tamaño del archivo comprimido es de aproximadamente 21 Mbs. En nuestro ejemplo, estamos colocando los datos en una carpeta temporal que hemos codificado. Alternativamente, puedes hacer esto con la función tempdir.
+
+```{r}
+# data location
+url<-"http://qgis.org/downloads/data/qgis_sample_data.zip"
+
+mydir<-"D:/Documentos/Cursillo - Espacial/Sesión 1"
+temp<-tempfile(tmpdir=mydir, fileext=".zip")
+download.file(url, temp)
+unzip(temp, exdir=mydir)
+unlink(temp) #borrar el archivo zip
+
+fpath<-list.files(path = mydir, full.names = TRUE, pattern = "qgis_sample_data")
+fpath<-gsub("/", "\\\\", fpath)
+```
+
+#### Leer y reclasificar los datos r?ster
+
+A menudo necesitamos tabular el área de diferentes tipos de cobertura terrestre (a partir de un ráster) por una región (como las regiones censales). A continuación mostramos cómo hacer esto con el paquete de ráster y luego comparar los resultados con la herramienta área de tabulación de ESRI. En este ejemplo, utilizamos la imagen de Clasificación de Cobertura Terrestre Global AVHRR que viene con los datos de muestra de QGIS y estamos utilizando el archivo de forma de regiones de QGIS. El ráster de la cubierta terrestre es un poco viejo; es bueno para una demostración, no tan bueno si le interesa la cobertura actual de la tierra. Tenga en cuenta que para guardar el tipeo, llamamos a la cobertura terrestre "uso de la tierra" en el código.
+
+```{r}
+# Read in landcover raster
+landusepath<-paste(fpath, "raster\\landcover.img", sep="\\")
+landuse.raw<-raster(landusepath)
+plot(landuse.raw, axes=FALSE)
+```
+
+Hay 14 posibles categorías de cobertura terrestre, pero por simplicidad en este ejemplo, vamos limitar los datos al agua (valor ráster 0), áreas más o menos verdes (1-8, 10,11), arbustos (9) y urbanos (13). Esta es una categorización muy aproximada. Para hacer el reclass estamos usando la función reclasificar y con, como entrada, una matriz de dos columnas con la primera como "to", y la segunda como "become". Etiquetamos agua, verde, arbusto y urbano como 0, 1, 9, 13 respectivamente y luego graficamos el ráster reclasificado.
+
+```{r}
+vals<-unique(values(landuse.raw))
+recl<-matrix(c(vals, c(0, rep(1, 6), 9, 1,1, 13)),ncol=2)
+recl
+landuse<-reclassify(landuse.raw, rcl=recl)
+plot(landuse, legend=FALSE, axes=FALSE)
+```
+
+Esto es significativamente más simple: solo cuatro categorías para trabajar.
+
+### Leer y graficar los datos de la región
+
+Retiramos los datos ráster usando la función ráster y ahora leemos en los datos del polígono usando readOGR del paquete rgdal. Preferimos readOGR porque, a diferencia de readShapePoly en maptools, lee en la información de proyección de forma predeterminada. Luego usamos el paquete ggplot2 para graficar los datos.
+
+```{r}
+regionpath<-paste(fpath, "shapefiles", sep="\\")
+region<-readOGR(dsn=regionpath, layer="regions") 
+
+ggplot()+geom_polygon(data=region,  aes(x=long, y=lat, group=group), 
+                      fill="cadetblue", color="grey")+
+  coord_equal()+xlim(c(-5000000, 5000000))+ylim(c(1000000, 8000000))
+```
+
+#### Filtrar/recortar datos geográficos a nuestras regiones de interés
+
+Estamos interesados en tipos de cobertura terrestre en tres regiones de Alaska. El primer paso es filtrar las regiones (los polígonos) a nuestras regiones de interés y luego recortar el ráster para que coincida. Si lo único que interesa son las tabulaciones de cobertura terrestre por región, en realidad no es necesario que recortar el ráster, pero como queremos un mapa que muestre solo nuestras tres regiones, es necesario recortar.
+
+Primero recortamos el ráster hasta la extensión de las tres regiones, luego usamos la función rasterize para crear una versión ráster de las regiones y finalmente usamos esa región-ráster para recortar, o en raster-hablar, enmascarar el trama de cubierta de tierra.
+
+```{r}
+# Crear un subconjunto con nuestras regiones de interés
+myregions<-c( "Anchorage", "Yukon-Koyukuk", "North Slope")
+region.sm<-region[region$NAME_2 %in% myregions,]
+
+# crop, rasterize y mask 
+cr<-crop(landuse, region.sm)
+fr<-rasterize(region.sm, cr)
+lr<-mask(x=cr, mask=fr)
+
+
+# vamos a graficar esas piezas para que puedas ver el resultado.
+#  Como solo quiero el raster sin leyenda / ejes, etc. se toma
+# una función para quitar la trama
+
+nakedMap<-function(dat, title=""){
+  gplot(dat)+geom_tile(aes(fill=value))+
+    ggtitle(title)+
+    coord_equal()+ 
+  scale_x_continuous(expand = c(0,0)) + 
+  scale_y_continuous(expand = c(0,0))
+}
+
+
+cr.plot<-nakedMap(cr, title="Cropped")
+fr.plot<-nakedMap(fr, title="Regions")
+lr.plot<-nakedMap(lr, title="Masked")
+
+grid.arrange(cr.plot, fr.plot, lr.plot, nrow=2,ncol=2)
+```
+
+### Haz un mapa más bonito
+
+Para hacer un buen mapa de las regiones, se puede usar una función llamada gplot del paquete rasterVis. La función gplot es una envoltura alrededor del paquete ggplot2, lo que nos permite usar los métodos ggplot2 con datos ráster.
+
+```{r}
+# centroides para los labels
+centroids<-cbind(coordinates(region.sm), region.sm@data)
+names(centroids)[1:2]<-c("x", "y")
+
+# use gplot del paquete rasterVis
+# geom_tile a?ade el raster, geom_polygon a?ade las regiones
+# geom_text a?ade los labels en los centroides
+gplot(lr)+
+  geom_tile(aes(fill=factor(value, labels=c("Water", "Green", "Shrubland", "Urban"))), alpha=0.8)+
+   scale_fill_manual(values = c("steelblue3", "forestgreen", "ghostwhite", "red"),
+      name= "Land use code")+
+  geom_polygon(data=region.sm, aes(x=long, y=lat, group=group), 
+               fill=NA,color="grey50", size=1)+
+  geom_text(data=centroids, aes(x=x, y=y, label=NAME_2), fontface="bold")+
+  coord_equal()
+```
+
+Se ve bien, hay claras tendencias en verde y matorral, en particular. Hay muy poco terreno urbano, por lo que básicamente no es visible (si te fijas bien, muy de cerca verás un poco de rojo en Anchorage).
+
+### Ejemplo con Datos Colombianos
+
+
+```{r}
+fpath<-list.files(path = mydir, full.names = TRUE, pattern = "COL_alt")
+Elevacion_Col<-paste(fpath, "COL_alt.grd", sep="/")
+Elevacion.raw<-raster(Elevacion_Col[1])
+plot(Elevacion.raw, axes=FALSE)
+colombia_shape<-readOGR(dsn="D:/Documentos/Cursillo - Espacial/Sesión 1/COL_adm",layer="COL_adm1")
+# Crear un subconjunto con nuestras regiones de inter?s
+miregion<-c("Cundinamarca")
+region.sm<-colombia_shape[colombia_shape$NAME_1 %in% miregion,]
+
+# crop, rasterize y mask 
+cr<-crop(Elevacion.raw, region.sm)
+fr<-rasterize(region.sm, cr)
+lr<-mask(x=cr, mask=fr)
+fr<-rasterize(region.sm, cr)
+lr<-mask(x=cr, mask=fr)
+cr.plot<-nakedMap(cr, title="Cropped")
+fr.plot<-nakedMap(fr, title="Regions")
+lr.plot<-nakedMap(lr, title="Masked")
+grid.arrange(cr.plot, fr.plot, lr.plot, nrow=2,ncol=2)
+```
+
+
+## Usando OpenStreetMap
+
+```{r}
+library("osmar")
+recurso=osmsource_file("D:/Documentos/Cursillo - Espacial/Sesión 1/Engativa.osm")
+bb=corner_bbox(-74.0780,4.6792,-74.0647,4.6895)
+Map1=get_osm(bb,recurso)
+
+plot(Map1)
+
+reduce_osmar<- function(object, boundbox){
+  id<- find(object,
+            node(attrs(lon>=boundbox[["left"]] & lon<=boundbox[["right"]] & lat>=boundbox[["bottom"]] & lat<=boundbox[["top"]])))
+  ids<- find_up(object, node(id))
+  ret<-subset(object, ids=ids)
+  ret
+}
+
+Map2=reduce_osmar(Map1,bb)
+plot_ways(Map2)
+```
